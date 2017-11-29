@@ -1,75 +1,139 @@
 package com.inprogress.reactnativeyoutube;
 
-import android.app.Activity;
 import android.app.FragmentManager;
-import android.app.FragmentTransaction;
-import android.content.pm.ActivityInfo;
-import android.widget.RelativeLayout;
+import android.os.Build;
+import android.os.Parcelable;
+import android.support.annotation.Nullable;
+import android.widget.FrameLayout;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.ReactContext;
+import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.uimanager.events.RCTEventEmitter;
-import com.google.android.youtube.player.YouTubePlayerFragment;
 
-public class YouTubeView extends RelativeLayout {
 
-    YouTubePlayerController youtubeController;
-    private YouTubePlayerFragment youTubePlayerFragment;
-    public static String youtube_key;
+public class YouTubeView extends FrameLayout {
+
+    private YouTubePlayerController mYouTubeController;
+    private VideoFragment mVideoFragment;
+    private boolean mHasSavedInstance = false;
 
     public YouTubeView(ReactContext context) {
         super(context);
         init();
     }
 
-    private ReactContext getReactContext() {
-        return (ReactContext)getContext();
+    public ReactContext getReactContext() {
+        return (ReactContext) getContext();
     }
 
     public void init() {
         inflate(getContext(), R.layout.youtube_layout, this);
-        FragmentManager fragmentManager = getReactContext().getCurrentActivity().getFragmentManager();
-        youTubePlayerFragment = (YouTubePlayerFragment) fragmentManager
-            .findFragmentById(R.id.youtubeplayerfragment);
-        youtubeController = new YouTubePlayerController(YouTubeView.this);
+        mVideoFragment = VideoFragment.newInstance(this);
+        mYouTubeController = new YouTubePlayerController(this);
+    }
+
+    @Nullable
+    @Override
+    protected Parcelable onSaveInstanceState() {
+        mHasSavedInstance = true;
+        return super.onSaveInstanceState();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        if (!mHasSavedInstance) {
+            FragmentManager fragmentManager = getReactContext().getCurrentActivity().getFragmentManager();
+            fragmentManager.beginTransaction().add(getId(), mVideoFragment).commit();
+        }
+        super.onAttachedToWindow();
     }
 
     @Override
     protected void onDetachedFromWindow() {
-        try {
-            Activity activity = getReactContext().getCurrentActivity();
-            FragmentManager fragmentManager = activity.getFragmentManager();
-            youTubePlayerFragment = (YouTubePlayerFragment)
-                    fragmentManager.findFragmentById(R.id.youtubeplayerfragment);
-            FragmentTransaction ft = fragmentManager.beginTransaction();
-            ft.remove(youTubePlayerFragment);
-            ft.commit();
+        if (getReactContext().getCurrentActivity() != null) {
+            FragmentManager fragmentManager = getReactContext().getCurrentActivity().getFragmentManager();
 
-            if (youtubeController.isPlayerFullscreen())
-                activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR);
+            // Code crashes with java.lang.IllegalStateException: Activity has been destroyed
+            // if our activity has been destroyed when this runs
+            if (mVideoFragment != null) {
+                boolean isDestroyed = false;
 
-        } catch (Exception e) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    isDestroyed = getReactContext().getCurrentActivity().isDestroyed();
+                }
+
+                if (!isDestroyed) {
+                    // https://stackoverflow.com/a/34508430/61072
+                    fragmentManager.beginTransaction().remove(mVideoFragment).commitAllowingStateLoss();
+                }
+            }
         }
         super.onDetachedFromWindow();
     }
 
     public void seekTo(int second) {
-        youtubeController.seekTo(second);
+        mYouTubeController.seekTo(second);
+    }
+
+    public int getCurrentTime() {
+        return mYouTubeController.getCurrentTime();
+    }
+
+    public int getDuration() {
+        return mYouTubeController.getDuration();
+    }
+
+    public void nextVideo() {
+        mYouTubeController.nextVideo();
+    }
+
+    public void previousVideo() {
+        mYouTubeController.previousVideo();
+    }
+
+    public void playVideoAt(int index) {
+        mYouTubeController.playVideoAt(index);
+    }
+
+    public int getVideosIndex() {
+        return mYouTubeController.getVideosIndex();
+    }
+
+    public void onVideoFragmentResume() {
+        mYouTubeController.onVideoFragmentResume();
+    }
+
+    public void receivedError(String param) {
+        WritableMap event = Arguments.createMap();
+        ReactContext reactContext = getReactContext();
+        event.putString("error", param);
+        event.putInt("target", getId());
+        reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(getId(), "error", event);
     }
 
     public void playerViewDidBecomeReady() {
         WritableMap event = Arguments.createMap();
-        ReactContext reactContext = (ReactContext) getContext();
+        ReactContext reactContext = getReactContext();
         event.putInt("target", getId());
         reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(getId(), "ready", event);
+    }
+
+    public void didChangeToSeeking(int milliSeconds) {
+        WritableMap event = Arguments.createMap();
+        event.putString("state", "seeking");
+        event.putInt("currentTime", milliSeconds / 1000);
+        event.putInt("target", getId());
+        ReactContext reactContext = getReactContext();
+        reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(getId(), "state", event);
     }
 
     public void didChangeToState(String param) {
         WritableMap event = Arguments.createMap();
         event.putString("state", param);
         event.putInt("target", getId());
-        ReactContext reactContext = (ReactContext) getContext();
+        ReactContext reactContext = getReactContext();
         reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(getId(), "state", event);
     }
 
@@ -77,69 +141,59 @@ public class YouTubeView extends RelativeLayout {
         WritableMap event = Arguments.createMap();
         event.putString("quality", param);
         event.putInt("target", getId());
-        ReactContext reactContext = (ReactContext) getContext();
+        ReactContext reactContext = getReactContext();
         reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(getId(), "quality", event);
     }
 
-    public void didPlayTime(String current, String duration) {
+    public void didChangeToFullscreen(boolean isFullscreen) {
         WritableMap event = Arguments.createMap();
-        event.putString("currentTime", current);
-        event.putString("duration", duration);
+        ReactContext reactContext = getReactContext();
+        event.putBoolean("isFullscreen", isFullscreen);
         event.putInt("target", getId());
-        ReactContext reactContext = (ReactContext) getContext();
-        reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(getId(), "progress", event);
-    }
-
-    public void receivedError(String param) {
-        WritableMap event = Arguments.createMap();
-        ReactContext reactContext = (ReactContext) getContext();
-        event.putString("error", param);
-        event.putInt("target", getId());
-        reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(getId(), "error", event);
-    }
-
-    public void setVideoId(String str) {
-        youtubeController.setVideoId(str);
-    }
-
-    public void setInline(Boolean bool) {
-        youtubeController.setPlayInline(bool);
-    }
-
-    public void setShowInfo(Boolean bool) {
-        youtubeController.setShowInfo(bool);
-    }
-
-    public void setModestbranding(Boolean bool) {
-        youtubeController.setModestBranding(bool);
-    }
-
-    public void setControls(Integer nb) {
-        youtubeController.setControls(nb);
-    }
-
-    public void setPlay(Boolean bool) {
-        youtubeController.setPlay(bool);
-    }
-
-    public void setHidden(Boolean bool) {
-        youtubeController.setHidden(bool);
+        reactContext.getJSModule(RCTEventEmitter.class).receiveEvent(getId(), "fullscreen", event);
     }
 
     public void setApiKey(String apiKey) {
-        youtube_key = apiKey;
-        youTubePlayerFragment.initialize(youtube_key, youtubeController);
+        try {
+            mVideoFragment.initialize(apiKey, mYouTubeController);
+        } catch (Exception e) {
+            receivedError(e.getMessage());
+        }
     }
 
-    public void setLoop(Boolean loop) {
-        youtubeController.setLoop(loop);
+    public void setVideoId(String str) {
+        mYouTubeController.setVideoId(str);
     }
 
-    public void setRelated(Boolean related) {
-        youtubeController.setRelated(related);
+    public void setVideoIds(ReadableArray arr) {
+        mYouTubeController.setVideoIds(arr);
     }
 
-    public void setFullscreen(Boolean bool) {
-        youtubeController.setFullscreen(bool);
+    public void setPlaylistId(String str) {
+        mYouTubeController.setPlaylistId(str);
+    }
+
+    public void setPlay(boolean bool) {
+        mYouTubeController.setPlay(bool);
+    }
+
+    public void setLoop(boolean bool) {
+        mYouTubeController.setLoop(bool);
+    }
+
+    public void setFullscreen(boolean bool) {
+        mYouTubeController.setFullscreen(bool);
+    }
+
+    public void setControls(int nb) {
+        mYouTubeController.setControls(nb);
+    }
+
+    public void setShowFullscreenButton(boolean bool) {
+        mYouTubeController.setShowFullscreenButton(bool);
+    }
+
+    public void setResumePlay(boolean bool) {
+        mYouTubeController.setResumePlay(bool);
     }
 }

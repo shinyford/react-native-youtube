@@ -1,165 +1,205 @@
 /**
  * @providesModule YouTube
- * @flow
  */
 
-'use strict';
-
-import React, { Component, PropTypes } from 'react';
-import {
+import React from 'react';
+import PropTypes from 'prop-types';
+import ReactNative, {
   View,
+  ViewPropTypes,
+  Text,
   StyleSheet,
   requireNativeComponent,
+  UIManager,
   NativeModules,
-  NativeMethodsMixin
+  BackAndroid,
+  BackHandler as BackHandlerModule,
 } from 'react-native';
 
-export default class YouTube extends Component {
+const BackHandler = BackHandlerModule || BackAndroid;
+
+const RCTYouTube = requireNativeComponent('ReactYouTube', YouTube, {
+  nativeOnly: {
+    onYouTubeError: true,
+    onYouTubeErrorReady: true,
+    onYouTubeErrorChangeState: true,
+    onYouTubeErrorChangeQuality: true,
+    onYouTubeChangeFullscreen: true,
+  },
+});
+
+export default class YouTube extends React.Component {
   static propTypes = {
-    style: View.propTypes.style,
-    videoId: PropTypes.string.isRequired,
     apiKey: PropTypes.string.isRequired,
-    playsInline: PropTypes.bool,
-    showinfo: PropTypes.bool,
-    modestbranding: PropTypes.bool,
-    controls: PropTypes.oneOf([0,1,2]),
-    origin: PropTypes.string,
+    videoId: PropTypes.string,
+    videoIds: PropTypes.arrayOf(PropTypes.string),
+    playlistId: PropTypes.string,
     play: PropTypes.bool,
-    rel: PropTypes.bool,
-    fs: PropTypes.bool,
-    hidden: PropTypes.bool,
+    loop: PropTypes.bool,
+    fullscreen: PropTypes.bool,
+    controls: PropTypes.oneOf([0, 1, 2]),
+    showFullscreenButton: PropTypes.bool,
+    resumePlayAndroid: PropTypes.bool,
+    onError: PropTypes.func,
     onReady: PropTypes.func,
     onChangeState: PropTypes.func,
     onChangeQuality: PropTypes.func,
-    onError: PropTypes.func,
-    // TODO: Make this work on android, the native player doesn't support it right now...
-    onProgress: PropTypes.func,
-    loop: PropTypes.bool,
-     ...View.propTypes,
+    onChangeFullscreen: PropTypes.func,
+    style: (ViewPropTypes && ViewPropTypes.style) || View.propTypes.style,
   };
 
   static defaultProps = {
-    loop: false,
+    showFullscreenButton: true,
+    resumePlayAndroid: true,
   };
-
-  _root: any;
 
   constructor(props) {
     super(props);
-    this._exportedProps = NativeModules.YouTubeManager && NativeModules.YouTubeManager.exportedProps;
 
-    this._onReady = this._onReady.bind(this);
-    this._onChangeState = this._onChangeState.bind(this);
-    this._onChangeQuality = this._onChangeQuality.bind(this);
-    this._onError = this._onError.bind(this);
-    this._onProgress = this._onProgress.bind(this);
+    this.state = {
+      moduleMargin: StyleSheet.hairlineWidth * 2,
+      fullscreen: props.fullscreen,
+    };
   }
 
-  setNativeProps(nativeProps: any) {
-    this._root.setNativeProps(nativeProps);
+  componentWillMount() {
+    BackHandler.addEventListener('hardwareBackPress', this._backPress);
   }
 
-  _onReady(event) {
-    return this.props.onReady && this.props.onReady(event.nativeEvent);
-  }
-
-  _onChangeState(event) {
-    if(event.nativeEvent.state == 'ended' && this.props.loop) {
-      this.seekTo(0);
+  componentWillReceiveProps(nextProps) {
+    // Translate next `fullscreen` prop to state
+    if (nextProps.fullscreen !== this.props.fullscreen) {
+      this.setState({ fullscreen: nextProps.fullscreen });
     }
-    return this.props.onChangeState && this.props.onChangeState(event.nativeEvent);
   }
 
-  _onChangeQuality(event) {
-    return this.props.onChangeQuality && this.props.onChangeQuality(event.nativeEvent);
+  componentWillUnmount() {
+    BackHandler.removeEventListener('hardwareBackPress', this._backPress);
   }
 
-  _onError(event) {
-    return this.props.onError && this.props.onError(event.nativeEvent);
+  _backPress = () => {
+    if (this.state.fullscreen) {
+      this.setState({ fullscreen: false });
+      return true;
+    }
+    return false;
+  };
+
+  _onError = event => {
+    if (this.props.onError) this.props.onError(event.nativeEvent);
+  };
+
+  _onReady = event => {
+    // The Android YouTube native module is pretty problematic when it comes to
+    // mounting correctly and rendering inside React-Native's views hierarchy.
+    // For now we must trigger some layout change to force a real render on it,
+    // right after the onReady event, so it will smoothly appear after ready.
+    // We also use the minimal margin to avoid `UNAUTHORIZED_OVERLAY` error from
+    // the native module that is very sensitive to being covered or even touching
+    // its containing view.
+    this.setState({ moduleMargin: StyleSheet.hairlineWidth });
+    if (this.props.onReady) this.props.onReady(event.nativeEvent);
+  };
+
+  _onChangeState = event => {
+    if (this.props.onChangeState) this.props.onChangeState(event.nativeEvent);
+  };
+
+  _onChangeQuality = event => {
+    if (this.props.onChangeQuality) this.props.onChangeQuality(event.nativeEvent);
+  };
+
+  _onChangeFullscreen = event => {
+    const { isFullscreen } = event.nativeEvent;
+    if (this.state.fullscreen !== isFullscreen) this.setState({ fullscreen: isFullscreen });
+    if (this.props.onChangeFullscreen) this.props.onChangeFullscreen(event.nativeEvent);
+  };
+
+  seekTo(seconds) {
+    UIManager.dispatchViewManagerCommand(
+      ReactNative.findNodeHandle(this._nativeComponentRef),
+      UIManager.ReactYouTube.Commands.seekTo,
+      [parseInt(seconds, 10)],
+    );
   }
-  _onProgress(event){
-    return this.props.onProgress && this.props.onProgress(event.nativeEvent);
+
+  nextVideo() {
+    UIManager.dispatchViewManagerCommand(
+      ReactNative.findNodeHandle(this._nativeComponentRef),
+      UIManager.ReactYouTube.Commands.nextVideo,
+      [],
+    );
   }
-  seekTo(seconds){
-    this.refs.youtubePlayer.seekTo(parseInt(seconds, 10));
+
+  previousVideo() {
+    UIManager.dispatchViewManagerCommand(
+      ReactNative.findNodeHandle(this._nativeComponentRef),
+      UIManager.ReactYouTube.Commands.previousVideo,
+      [],
+    );
+  }
+
+  playVideoAt(index) {
+    UIManager.dispatchViewManagerCommand(
+      ReactNative.findNodeHandle(this._nativeComponentRef),
+      UIManager.ReactYouTube.Commands.playVideoAt,
+      [parseInt(index, 10)],
+    );
+  }
+
+  videosIndex() {
+    return new Promise((resolve, reject) =>
+      NativeModules.YouTubeModule
+        .videosIndex(ReactNative.findNodeHandle(this._nativeComponentRef))
+        .then(index => resolve(index))
+        .catch(errorMessage => reject(errorMessage)),
+    );
+  }
+
+  currentTime() {
+    return new Promise((resolve, reject) =>
+      NativeModules.YouTubeModule
+        .currentTime(ReactNative.findNodeHandle(this._nativeComponentRef))
+        .then(currentTime => resolve(currentTime))
+        .catch(errorMessage => reject(errorMessage)),
+    );
+  }
+
+  duration() {
+    return new Promise((resolve, reject) =>
+      NativeModules.YouTubeModule
+        .duration(ReactNative.findNodeHandle(this._nativeComponentRef))
+        .then(duration => resolve(duration))
+        .catch(errorMessage => reject(errorMessage)),
+    );
   }
 
   render() {
-    var style = [styles.base, this.props.style];
-    var nativeProps = Object.assign({}, this.props);
-    nativeProps.style = style;
-
-    /*
-     * Try to use `playerParams` instead of settings `playsInline` and
-     * `videoId` individually.
-     */
-    if (this._exportedProps) {
-      if (this._exportedProps.playerParams) {
-        nativeProps.playerParams = {
-          videoId: this.props.videoId,
-        };
-        delete nativeProps.videoId;
-
-        nativeProps.playerParams.playerVars = {};
-
-        if (this.props.playsInline) {
-          nativeProps.playerParams.playerVars.playsInline = 1;
-          delete nativeProps.playsInline;
-        };
-        if (this.props.modestbranding) {
-          nativeProps.playerParams.playerVars.modestbranding = 1;
-          delete nativeProps.modestbranding;
-        };
-
-        if (this.props.showinfo!==undefined) {
-          nativeProps.playerParams.playerVars.showinfo = this.props.showinfo ? 1 : 0;
-          delete nativeProps.showinfo;
-        };
-        if (this.props.controls!==undefined) {
-          nativeProps.playerParams.playerVars.controls = this.props.controls;
-          delete nativeProps.controls;
-        };
-        if (this.props.origin!==undefined) {
-          nativeProps.playerParams.playerVars.origin = this.props.origin;
-          delete nativeProps.origin;
-        };
-        if (this.props.rel!==undefined) {
-          nativeProps.playerParams.playerVars.rel = this.props.rel ? 1 : 0;
-          delete nativeProps.rel;
-        };
-        if (this.props.fs!==undefined) {
-          nativeProps.playerParams.playerVars.fs = this.props.fs ? 1 : 0;
-          delete nativeProps.fs;
-        };
-      };
-    }
-
-    return <RCTYouTube
-      ref={component => { this._root = component; }}
-      onReady={this._onReady}
-      {...nativeProps}
-      // These override and delegate to the this.props functions
-      onYoutubeVideoReady={this._onReady}
-      onYoutubeVideoChangeState={this._onChangeState}
-      onYoutubeVideoChangeQuality={this._onChangeQuality}
-      onYoutubeVideoError={this._onError}
-      onYoutubeVideoProgress={this._onProgress}
-      />;
+    return (
+      <View style={[styles.container, this.props.style]}>
+        <RCTYouTube
+          ref={component => {
+            this._nativeComponentRef = component;
+          }}
+          {...this.props}
+          fullscreen={this.state.fullscreen}
+          style={[styles.module, { margin: this.state.moduleMargin }]}
+          onYouTubeError={this._onError}
+          onYouTubeReady={this._onReady}
+          onYouTubeChangeState={this._onChangeState}
+          onYouTubeChangeQuality={this._onChangeQuality}
+          onYouTubeChangeFullscreen={this._onChangeFullscreen}
+        />
+      </View>
+    );
   }
 }
 
-const RCTYouTube = requireNativeComponent('ReactYouTube', YouTube,
-{
-  nativeOnly: {onYoutubeVideoError:true,
-              onYoutubeVideoReady:true,
-              onYoutubeVideoChangeState:true,
-              onYoutubeVideoChangeQuality:true,
-              onYoutubeVideoProgress:true,
-              }
-});
-
 const styles = StyleSheet.create({
-  base: {
-    overflow: 'hidden',
+  container: {
+    backgroundColor: 'black',
+  },
+  module: {
+    flex: 1,
   },
 });
