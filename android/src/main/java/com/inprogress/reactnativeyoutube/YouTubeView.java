@@ -1,5 +1,6 @@
 package com.inprogress.reactnativeyoutube;
 
+import android.app.Activity;
 import android.app.FragmentManager;
 import android.os.Build;
 import android.os.Parcelable;
@@ -53,7 +54,12 @@ public class YouTubeView extends FrameLayout {
     @Override
     protected void onDetachedFromWindow() {
         if (getReactContext().getCurrentActivity() != null) {
-            FragmentManager fragmentManager = getReactContext().getCurrentActivity().getFragmentManager();
+            Activity activity = getReactContext().getCurrentActivity();
+            FragmentManager fragmentManager = activity.getFragmentManager();
+
+            if (mYouTubeController.isFullscreen()) {
+                activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR);
+            }
 
             // Code crashes with java.lang.IllegalStateException: Activity has been destroyed
             // if our activity has been destroyed when this runs
